@@ -1867,11 +1867,7 @@ namespace Server.MirEnvir
 
             for (var i = 0; i < MapInfoList.Count; i++)
             {
-                // Call CreateMap(), which adds the map to Envir.MapList
-                MapInfoList[i].CreateMap();
-
-                // Fetch the created map from Envir.MapList
-                Map map = MapList.FirstOrDefault(m => m.Info == MapInfoList[i]);
+                Map map = MapInfoList[i].CreateMap();
 
                 if (map != null)
                 {
