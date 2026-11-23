@@ -5,7 +5,6 @@ using Server.MirEnvir;
 using Server.MirNetwork;
 using S = ServerPackets;
 using System.Text.RegularExpressions;
-using Timer = Server.MirEnvir.Timer;
 
 namespace Server.MirObjects
 {
@@ -20,7 +19,6 @@ namespace Server.MirObjects
         public long LastRecallTime, LastTeleportTime, LastProbeTime;
         public long NextMailTime;
         public long MenteeEXP;
-
         public bool WarZone = false;
 
         public int CurrentHeroIndex;
@@ -113,6 +111,7 @@ namespace Server.MirObjects
         public const long TurnDelay = 350, HarvestDelay = 350, FishingCastDelay = 750, FishingDelay = 200, MovementDelay = 2000;
         public long ChatTime, ShoutTime, FishingTime, FishingFoundTime, CreatureTimeLeftTicker, RestedTime, MovementTime;
 
+        private long StuntAllUnlockLastTime;
         public byte ChatTick;
 
         public bool SendIntelligentCreatureUpdates = false;
@@ -184,9 +183,8 @@ namespace Server.MirObjects
         public uint ItemRentalPeriodLength = 0;
         public bool ItemRentalFeeLocked = false;
         public bool ItemRentalItemLocked = false;
-
+        public bool Stuntlucky = false;
         private long LastRankUpdate = Envir.Time;
-
         private Map LastValidMap;
         private Point LastValidLocation;
 
@@ -212,6 +210,7 @@ namespace Server.MirObjects
 
             info.Player = this;
             info.Mount = new MountInfo(this);
+            info.Stunt = new StuntInfo(this);
 
             Connection = connection;
             Info = info;
@@ -541,6 +540,7 @@ namespace Server.MirObjects
                 }
             }
             RefreshCreaturesTimeLeft();
+            ProcessStuntAllUnlock();
         }
         public override void Process(DelayedAction action)
         {
@@ -820,6 +820,7 @@ namespace Server.MirObjects
 
             RefreshStats();
         }
+
         public override void WinExp(uint amount, uint targetLevel = 0)
         {
             if (CurrentMap?.Info?.NoExperience == true) return;
@@ -885,6 +886,7 @@ namespace Server.MirObjects
                 Hero.GainExp((uint)expPoint);
             }
         }
+
         public override void GainExp(uint amount)
         {
             if (!CanGainExp) return;
@@ -895,7 +897,7 @@ namespace Server.MirObjects
 
             if (Info.Married != 0)
             {
-                if (HasBuff(BuffType.心心相映, out Buff buff))
+                if (HasBuff(BuffType.伴侣经验提升, out Buff buff))
                 {
                     CharacterInfo lover = Envir.GetCharacterInfo(Info.Married);
                     PlayerObject loverPlayer = Envir.GetPlayer(lover.Name);
@@ -908,7 +910,7 @@ namespace Server.MirObjects
 
             if (Info.Mentor != 0 && !Info.IsMentor)
             {
-                if (HasBuff(BuffType.衣钵相传, out _))
+                if (HasBuff(BuffType.师徒经验提升, out _))
                 {
                     CharacterInfo mentor = Envir.GetCharacterInfo(Info.Mentor);
                     PlayerObject mentorPlayer = Envir.GetPlayer(mentor.Name);
@@ -1596,75 +1598,70 @@ namespace Server.MirObjects
             return true;
         }
 
-        // Run after a successful map change (movement or teleport)
         private void ApplyMapEntryRules(bool mapChanged)
         {
-            if (!mapChanged) return;
+            if (!mapChanged || CurrentMap == null || CurrentMap.Info == null)
+                return;
 
-            // MapEnter NPC hook
-            CallDefaultNPC(DefaultNPCType.MapEnter, CurrentMap.Info.FileName);
+            MapInfo mapInfo = CurrentMap.Info;
 
-            // NoGroup: solo-only maps
-            if (CurrentMap.Info.NoGroup && GroupMembers != null)
+            CallDefaultNPC(DefaultNPCType.MapEnter, mapInfo.FileName);
+
+            if (mapInfo.NoGroup && GroupMembers != null)
             {
                 DisbandGroup(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.GroupingDisabledOnMap));
             }
 
-            // NoPets: freeze combat pets while allowing pickup creatures to keep working
-            if (CurrentMap.Info.NoPets)
+            bool restrictedPetFound = false;
+
+            foreach (var pet in Pets)
             {
-                bool restrictedPetFound = false;
+                if (!PetAffectedByNoPetRule(pet))
+                    continue;
 
-                foreach (var pet in Pets)
+                if (mapInfo.NoPets)
                 {
-                    if (!PetAffectedByNoPetRule(pet))
-                        continue;
-
                     pet.Target = null;
                     pet.Frozen = true;
                     pet.PMode = PetMode.None;
 
-                    // small visual nudge
                     pet.Broadcast(new S.ObjectTurn { Direction = pet.Direction, Location = pet.CurrentLocation });
+
                     restrictedPetFound = true;
                 }
-
-                if (restrictedPetFound)
-                    ReceiveChat(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.PetsNotAllowedOnMap), ChatType.System);
-            }
-
-            else
-            {
-                foreach (var pet in Pets)
+                else
                 {
-                    if (!PetAffectedByNoPetRule(pet))
-                        continue;
-
                     pet.Frozen = false;
                     pet.PMode = PetMode.Both;
-                    pet.BroadcastInfo();
                 }
             }
 
-            // NoIntelligentCreatures: unsummon pickup pets
-            if (CurrentMap.Info.NoIntelligentCreatures && CreatureSummoned && SummonedCreatureType != IntelligentCreatureType.None)
+            if (mapInfo.NoPets && restrictedPetFound)
+            {
+                ReceiveChat(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.PetsNotAllowedOnMap), ChatType.System);
+            }
+
+            if (mapInfo.NoIntelligentCreatures && CreatureSummoned && SummonedCreatureType != IntelligentCreatureType.None)
             {
                 IntelligentCreatureType dismissedType = SummonedCreatureType;
+
                 UnSummonIntelligentCreature(dismissedType);
+
                 ReceiveChat(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.IntelligentCreaturesNotAllowedOnMap), ChatType.System);
             }
 
-            // NoHero: despawn on entry
-            if (CurrentMap.Info.NoHero && Hero != null)
+            if (mapInfo.NoHero && Hero != null)
             {
+                HeroObject hero = Hero;
+
                 DespawnHero();
+
                 ReceiveChat(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.HeroesNotAllowedOnMap), ChatType.System);
 
-                if (Hero != null && Envir.Heroes.Contains(Hero))
-                    Envir.Heroes.Remove(Hero);
+                if (hero != null && Envir.Heroes.Contains(hero))
+                    Envir.Heroes.Remove(hero);
             }
 
-            // Party UI refresh
             GroupMemberMapNameChanged();
         }
 
@@ -2525,11 +2522,19 @@ namespace Server.MirObjects
                             MessageQueue.Enqueue(GameLanguage.ServerTextMap.GetLocalization((ServerTextKeys.PlayerAttemptCreateItem), Name, iInfo.FriendlyName, tempCount));
                         }
                         break;
+
                     case "CLEARBUFFS":
-                        foreach (var buff in Buffs)
+                        for (int i = Buffs.Count - 1; i >= 0; i--)
                         {
-                            buff.FlagForRemoval = true;
-                            buff.ExpireTime = 0;
+                            if (Buffs[i] == null)
+                            {
+                                MessageQueue.Instance.Enqueue($"发现空Buff，已自动删除：ObjectID={ObjectID}");
+                                Buffs.RemoveAt(i);
+                                continue;
+                            }
+
+                            Buffs[i].FlagForRemoval = true;
+                            Buffs[i].ExpireTime = 0;
                         }
                         break;
 
@@ -3287,6 +3292,45 @@ namespace Server.MirObjects
                         Helpers.ChatSystem.SystemMessage(chatMessage: creditMsg);
 
                         break;
+
+                    case "GIVESTUNTPOINTS":
+                        if ((!IsGM && !Settings.TestServer) || parts.Length < 2) return;
+
+                        player = this;
+
+                        long stuntPoints;
+
+                        if (parts.Length > 2)
+                        {
+                            if (!IsGM) return;
+
+                            if (!long.TryParse(parts[2], out stuntPoints)) return;
+                            player = Envir.GetPlayer(parts[1]);
+
+                            if (player == null)
+                            {
+                                ReceiveChat(string.Format("玩家 {0} 未在线", parts[1]), ChatType.System);
+                                return;
+                            }
+                        }
+                        else if (!long.TryParse(parts[1], out stuntPoints)) return;
+
+                        if (stuntPoints < 0) return;
+
+                        if (stuntPoints > long.MaxValue - player.Info.StuntPoints)
+                            stuntPoints = long.MaxValue - player.Info.StuntPoints;
+
+                        player.AddStuntPoints(stuntPoints);
+
+                        string stuntPointsMsg = stuntPoints == 1
+                            ? $"游戏管理员:{Name} 给予玩家:{player.Name} 一点 绝技点"
+                            : $"游戏管理员:{Name} 给予玩家:{player.Name} {stuntPoints} 点 绝技点";
+
+                        MessageQueue.Enqueue(stuntPointsMsg);
+                        Helpers.ChatSystem.SystemMessage(chatMessage: stuntPointsMsg);
+
+                        break;
+
                     case "GIVESKILL":
                         if ((!IsGM && !Settings.TestServer) || parts.Length < 3) return;
 
@@ -3379,7 +3423,7 @@ namespace Server.MirObjects
                             ReceiveChat(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.CannotLeaveGuildAtWar), ChatType.System);
                             return;
                         }
-                        if (MyGuild.Name == Settings.NewbieGuild && Settings.NewbieGuildBuffEnabled == true) RemoveBuff(BuffType.新人特效);
+                        if (MyGuild.Name == Settings.NewbieGuild && Settings.NewbieGuildBuffEnabled == true) RemoveBuff(BuffType.公会成员);
                         if (HasBuff(BuffType.公会特效)) RemoveBuff(BuffType.公会特效);
                         MyGuild.DeleteMember(this, Name);
                         break;
@@ -4954,6 +4998,7 @@ namespace Server.MirObjects
                 MountType = Mount.MountType,
                 RidingMount = RidingMount,
                 Fishing = Fishing,
+                StuntType = Stunt.StuntType,
 
                 TransformType = TransformType,
 
@@ -4974,6 +5019,9 @@ namespace Server.MirObjects
 
             switch (gridTo)
             {
+                case MirGridType.Stunt:
+                    item = Info.Equipment[(int)EquipmentSlot.护身符];
+                    break;
                 case MirGridType.Mount:
                     item = Info.Equipment[(int)EquipmentSlot.坐骑];
                     break;
@@ -5012,6 +5060,21 @@ namespace Server.MirObjects
             {
                 Enqueue(p);
                 return;
+            }
+
+            if (gridTo == MirGridType.Stunt && !item.Info.IsStuntBox)
+            {
+                Enqueue(p);
+                return;
+            }
+
+            if (gridTo == MirGridType.Stunt && to == (int)StuntSlot.StuntAll)
+            {
+                if (Info.StuntAllUnlockTime <= 0)
+                {
+                    Enqueue(p);
+                    return;
+                }
             }
 
             if (to < 0 || to >= item.Slots.Length)
@@ -5089,7 +5152,7 @@ namespace Server.MirObjects
                 return;
             }
 
-            if ((item.Info.IsFishingRod || item.Info.Type == ItemType.坐骑) && temp.Info.Type == ItemType.镶嵌宝石)
+            if ((item.Info.IsFishingRod || item.Info.IsStuntBox || item.Info.Type == ItemType.坐骑) && temp.Info.Type == ItemType.镶嵌宝石)
             {
                 Enqueue(p);
                 return;
@@ -5153,6 +5216,12 @@ namespace Server.MirObjects
 
                 p.Success = true;
                 Enqueue(p);
+
+                if (gridTo == MirGridType.Stunt)
+                {
+                    StuntBox();
+                }
+
                 RefreshStats();
 
                 Report.ItemMoved(temp, grid, gridTo, index, to);
@@ -5274,6 +5343,16 @@ namespace Server.MirObjects
                 toArray[to] = temp;
                 p.Success = true;
                 Enqueue(p);
+
+                if (temp.Info.Type == ItemType.护身符 && temp.Info.Shape == 5)
+                {
+                    if (grid == MirGridType.Inventory)
+                    {
+                        InvalidateStuntBoxes();
+                        StuntBox();
+                    }
+                }
+
                 if (grid == MirGridType.HeroInventory)
                 {
                     Hero.RefreshStats();
@@ -5354,6 +5433,9 @@ namespace Server.MirObjects
                 case MirGridType.Fishing:
                     temp = Info.Equipment[(int)EquipmentSlot.武器];
                     break;
+                case MirGridType.Stunt:
+                    temp = Info.Equipment[(int)EquipmentSlot.护身符];
+                    break;
                 case MirGridType.Socket:
                     UserItem temp2;
                     for (int i = 0; i < Info.Equipment.Length; i++)
@@ -5383,6 +5465,12 @@ namespace Server.MirObjects
             }
 
             if (grid == MirGridType.Fishing && !temp.Info.IsFishingRod)
+            {
+                Enqueue(p);
+                return;
+            }
+
+            if (grid == MirGridType.Stunt && !temp.Info.IsStuntBox)
             {
                 Enqueue(p);
                 return;
@@ -5420,6 +5508,11 @@ namespace Server.MirObjects
 
             if (slotTemp.Cursed)
                 UnlockCurse = false;
+
+            if (grid == MirGridType.Stunt)
+            {
+                StuntBox();
+            }
 
             if (array[to] == null)
             {
@@ -5836,8 +5929,14 @@ namespace Server.MirObjects
 
                 p.Success = true;
                 Enqueue(p);
-                if (toGrid == MirGridType.HeroEquipment)
-                    Hero.RefreshStats();
+
+                if (temp.Info.Type == ItemType.护身符 && temp.Info.Shape == 5)
+                {
+                    StuntBox();
+                }
+
+                if (toGrid == MirGridType.HeroEquipment) Hero.RefreshStats();
+
                 else
                     RefreshStats();
 
@@ -6030,19 +6129,19 @@ namespace Server.MirObjects
                                     AddBuff(BuffType.魔法防御提升, this, time * Settings.Minute, new Stats { [Stat.MaxMAC] = item.GetTotal(Stat.MaxMAC) });
 
                                 if (item.GetTotal(Stat.背包重量) > 0)
-                                    AddBuff(BuffType.背包负重提升, this, time * Settings.Minute, new Stats { [Stat.背包重量] = item.GetTotal(Stat.背包重量) });
+                                    AddBuff(BuffType.背包重量提升, this, time * Settings.Minute, new Stats { [Stat.背包重量] = item.GetTotal(Stat.背包重量) });
 
                                 if (item.GetTotal(Stat.准确) > 0)
-                                    AddBuff(BuffType.准确命中提升, this, time * Settings.Minute, new Stats { [Stat.准确] = item.GetTotal(Stat.准确) });
+                                    AddBuff(BuffType.准确提升, this, time * Settings.Minute, new Stats { [Stat.准确] = item.GetTotal(Stat.准确) });
 
                                 if (item.GetTotal(Stat.敏捷) > 0)
-                                    AddBuff(BuffType.敏捷躲避提升, this, time * Settings.Minute, new Stats { [Stat.敏捷] = item.GetTotal(Stat.敏捷) });
+                                    AddBuff(BuffType.敏捷提升, this, time * Settings.Minute, new Stats { [Stat.敏捷] = item.GetTotal(Stat.敏捷) });
                             }
                             break;
                         case 4: //Exp
                             {
                                 int time = item.Info.Durability;
-                                AddBuff(BuffType.获取经验提升, this, Settings.Minute * time, new Stats { [Stat.经验收益] = item.GetTotal(Stat.幸运) });
+                                AddBuff(BuffType.经验收益提升, this, Settings.Minute * time, new Stats { [Stat.经验收益] = item.GetTotal(Stat.幸运) });
                             }
                             break;
                         case 5: //Drop
@@ -6062,7 +6161,7 @@ namespace Server.MirObjects
                         case 8:
                             {
                                 int time = item.Info.Durability;
-                                AddBuff(BuffType.技能经验提升, this, Settings.Minute * time, new Stats { [Stat.技能熟练度收益] = 3 });
+                                AddBuff(BuffType.技能熟练提升, this, Settings.Minute * time, new Stats { [Stat.技能熟练度收益] = 3 });
                             }
                             break;
                     }
@@ -6406,7 +6505,7 @@ namespace Server.MirObjects
                                 {
                                     var time = item.Info.Durability;
 
-                                    AddBuff(BuffType.包容万斤, this, time * Settings.Minute, new Stats { [Stat.背包重量] = item.GetTotal(Stat.幸运) });
+                                    AddBuff(BuffType.背包重量提升, this, time * Settings.Minute, new Stats { [Stat.背包重量] = item.GetTotal(Stat.幸运) });
                                 }
                                 break;
                         }
@@ -6704,6 +6803,14 @@ namespace Server.MirObjects
                     }
                     arrayFrom = Info.Equipment[(int)EquipmentSlot.武器].Slots;
                     break;
+                case MirGridType.Stunt:
+                    if (Info.Equipment[(int)EquipmentSlot.护身符] == null || !Info.Equipment[(int)EquipmentSlot.护身符].Info.IsStuntBox)
+                    {
+                        Enqueue(p);
+                        return;
+                    }
+                    arrayFrom = Info.Equipment[(int)EquipmentSlot.护身符].Slots;
+                    break;
                 case MirGridType.HeroInventory:
                     if (!HasHero || !HeroSpawned)
                     {
@@ -6767,6 +6874,14 @@ namespace Server.MirObjects
                         return;
                     }
                     arrayTo = Info.Equipment[(int)EquipmentSlot.武器].Slots;
+                    break;
+                case MirGridType.Stunt:
+                    if (Info.Equipment[(int)EquipmentSlot.护身符] == null || !Info.Equipment[(int)EquipmentSlot.护身符].Info.IsStuntBox)
+                    {
+                        Enqueue(p);
+                        return;
+                    }
+                    arrayTo = Info.Equipment[(int)EquipmentSlot.护身符].Slots;
                     break;
                 case MirGridType.HeroInventory:
                     if (!HasHero || !HeroSpawned)
@@ -12585,7 +12700,7 @@ namespace Server.MirObjects
                     break;
             }
 
-            return dropitem;
+            return dropitem;//待修复问题
         }
 
         private IntelligentCreatureObject GetCreatureByName(string creatureName)
@@ -14652,40 +14767,395 @@ namespace Server.MirObjects
 
         #endregion
 
-        public Server.MirEnvir.Timer GetTimer(string key)
-        {
-            var timerKey = Name + "-" + key;
+        #region StuntFunction
 
-            if (Envir.Timers.ContainsKey(timerKey))
+        public void StuntBox()
+        {
+            if (Info.Equipment == null || (int)EquipmentSlot.护身符 >= Info.Equipment.Length) return;
+
+            UserItem box = Info.Equipment[(int)EquipmentSlot.护身符];
+            if (box == null || !box.Info.IsStuntBox || box.Slots == null || Stunt.StuntType != 5)
             {
-                return Envir.Timers[timerKey];
+                RemoveBuff(BuffType.攻击型绝技);
+                RemoveBuff(BuffType.防御型绝技);
+                RemoveBuff(BuffType.技能型绝技);
+                RemoveBuff(BuffType.共用型绝技);
+                return;
             }
 
-            return null;
-        }
-        public void SetTimer(string key, int seconds, byte type = 0)
-        {
-            if (seconds < 0) seconds = 0;
-
-            var timerKey = Name + "-" + key;
-
-            Timer t = new Timer(timerKey, seconds, type);
-
-            Envir.Timers[timerKey] = t;
-
-            Enqueue(new S.SetTimer { Key = t.Key, Seconds = t.Seconds, Type = t.Type });
-        }
-        public void ExpireTimer(string key)
-        {
-            var timerKey = Name + "-" + key;
-
-            if (Envir.Timers.ContainsKey(timerKey))
+            if ((int)StuntSlot.StuntDestroy < box.Slots.Length)
             {
-                Envir.Timers.Remove(timerKey);
+                UserItem stuntDestroy = box.Slots[(int)StuntSlot.StuntDestroy];
+                ApplyBuffForSlot(stuntDestroy, BuffType.攻击型绝技);
+                if (stuntDestroy != null) DamagedStuntItem(StuntSlot.StuntDestroy, 1);
             }
 
-            Enqueue(new S.ExpireTimer { Key = timerKey });
+            if ((int)StuntSlot.StuntGuard < box.Slots.Length)
+            {
+                UserItem stuntGuard = box.Slots[(int)StuntSlot.StuntGuard];
+                ApplyBuffForSlot(stuntGuard, BuffType.防御型绝技);
+                if (stuntGuard != null) DamagedStuntItem(StuntSlot.StuntGuard, 1);
+            }
+
+            if ((int)StuntSlot.StuntMedicine < box.Slots.Length)
+            {
+                UserItem stuntMedicine = box.Slots[(int)StuntSlot.StuntMedicine];
+                ApplyBuffForSlot(stuntMedicine, BuffType.技能型绝技);
+                if (stuntMedicine != null) DamagedStuntItem(StuntSlot.StuntMedicine, 1);
+            }
+
+            if ((int)StuntSlot.StuntAll < box.Slots.Length)
+            {
+                UserItem all = box.Slots[(int)StuntSlot.StuntAll];
+
+                if (Info.StuntAllUnlockTime > 0)
+                {
+                    ApplyBuffForSlot(all, BuffType.共用型绝技);
+
+                    if (all != null)
+                        DamagedStuntItem(StuntSlot.StuntAll, 1);
+                }
+                else
+                {
+                    RemoveBuff(BuffType.共用型绝技);
+                }
+            }
+
+            Enqueue(GetStuntInfo());
+            Broadcast(GetStuntInfo());
         }
+
+        private void ApplyBuffForSlot(UserItem item, BuffType buffType)
+        {
+            if (item != null)
+            {
+                Stats stats = new Stats();
+
+                foreach (Stat stat in Enum.GetValues(typeof(Stat)))
+                {
+                    if (item.Info.Stats[stat] > 0)
+                    {
+                        stats[stat] = item.Info.Stats[stat];
+                    }
+                }
+
+                AddBuff(buffType, this, 0, stats);
+            }
+            else
+            {
+                RemoveBuff(buffType);
+            }
+        }
+
+        private void DamagedStuntItem(StuntSlot type, int lossDura)
+        {
+            UserItem item = GetStuntItem(type);
+
+            if (item != null)
+            {
+                DamageItem(item, lossDura, true);
+
+                if (item.CurrentDura <= 0)
+                {
+                    RemoveBuffBasedOnSlot(type);
+                }
+            }
+        }
+
+        private void RemoveBuffBasedOnSlot(StuntSlot type)
+        {
+            switch (type)
+            {
+                case StuntSlot.StuntDestroy:
+                    RemoveBuff(BuffType.攻击型绝技);
+                    break;
+                case StuntSlot.StuntGuard:
+                    RemoveBuff(BuffType.防御型绝技);
+                    break;
+                case StuntSlot.StuntMedicine:
+                    RemoveBuff(BuffType.技能型绝技);
+                    break;
+                case StuntSlot.StuntAll:
+                    RemoveBuff(BuffType.共用型绝技);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        private UserItem GetStuntItem(StuntSlot type)
+        {
+            UserItem item = Info.Equipment[(int)EquipmentSlot.护身符];
+            if (item == null || item.Info.Type != ItemType.护身符 || !item.Info.IsStuntBox) return null;
+
+            UserItem stuntBoxItem = item.Slots[(int)type];
+
+            return stuntBoxItem;
+        }
+
+        public void DisassembleStuntItems(ulong UniqueID)
+        {
+            if (NPCPage == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < Info.Inventory.Length; i++)
+            {
+                UserItem item = Info.Inventory[i];
+
+                if (item != null && item.UniqueID == UniqueID)
+                {
+                    if (item.Info.Bind.HasFlag(BindMode.UnableToDisassemble))
+                    {
+                        ReceiveChat($"无法完成分解 {item.FriendlyName}", ChatType.System);
+                        return;
+                    }
+
+                    if (item.RentalInformation != null)
+                    {
+                        ReceiveChat($"无法分解 {item.FriendlyName} 因为此物品属于 {item.RentalInformation.OwnerName}", ChatType.System);
+                        return;
+                    }
+
+                    long gradeMultiplier = (long)item.Info.Grade + 10;
+                    long stuntPoints = (long)item.Count * 10 * gradeMultiplier;
+
+                    if (stuntPoints > 0)
+                    {
+                        if (stuntPoints > long.MaxValue - Info.StuntPoints)
+                            Info.StuntPoints = long.MaxValue;
+                        else
+                            Info.StuntPoints += stuntPoints;
+                    }
+
+                    Enqueue(new S.DeleteItem { UniqueID = item.UniqueID, Count = item.Count });
+                    Info.Inventory[i] = null;
+                    Enqueue(GetStuntInfo());
+
+                    ReceiveChat($"{item.FriendlyName} 已成功分解，获得 {stuntPoints} 绝技点", ChatType.System);
+                    break;
+                }
+            }
+        }
+        private void ProcessStuntAllUnlock()
+        {
+            if (Info.StuntAllUnlockTime > 0)
+            {
+                long elapsed = (Envir.Time - StuntAllUnlockLastTime) / Settings.Second;
+                if (elapsed > 0)
+                {
+                    Info.StuntAllUnlockTime -= elapsed;
+                    StuntAllUnlockLastTime += elapsed * Settings.Second;
+
+                    if (Info.StuntAllUnlockTime <= 0) Info.StuntAllUnlockTime = 0;
+                }
+
+                if (Info.StuntAllUnlockTime > 0) return;
+            }
+
+            RemoveBuff(BuffType.共用型绝技);
+
+            if (Info.Equipment == null) return;
+
+            UserItem box = Info.Equipment[(int)EquipmentSlot.护身符];
+
+            if (box == null || box.Info == null || !box.Info.IsStuntBox || box.Slots == null) return;
+
+            UserItem item = box.Slots[(int)StuntSlot.StuntAll];
+
+            if (item == null || item.Info == null) return;
+            if (!CanGainItem(item)) return;
+
+            GainItem(item);
+            box.Slots[(int)StuntSlot.StuntAll] = null;
+            RefreshStuntInfo();
+        }
+
+        public void GetStuntlucky()
+        {
+            int lotteryNumber = Envir.Random.Next(1, 11);
+
+            if (lotteryNumber % 2 != 0)
+            {
+                Stuntlucky = true;
+
+                ReceiveChat("幸运模式已激活，下一次抽奖享受幸运加成！", ChatType.System);
+            }
+            else
+            {
+                Stuntlucky = false;
+            }
+        }
+        public void LotteryStuntItems()
+        {
+            if (Info.StuntPoints < 3000)
+            {
+                ReceiveChat("绝技点数不足，无法进行抽奖。", ChatType.System);
+                return;
+            }
+            bool lucky = Stuntlucky;
+
+            Info.StuntPoints -= 3000;
+
+            List<ItemInfo> dropList = new List<ItemInfo>();
+
+            int lotteryNumber = Envir.Random.Next(1, 11);
+
+            if (lotteryNumber == 1 || lotteryNumber == 3 || lotteryNumber == 5 || lotteryNumber == 7 || lotteryNumber == 9 )
+            {
+                foreach (DropInfo drop in Envir.LotteryStuntDrops)
+                {
+                    int chance = Math.Max(drop.Chance, 1);
+
+                    if (lucky)
+                    {
+                        chance = Math.Max(1, chance / 2);
+                    }
+
+                    if (Envir.Random.Next(chance) == 0)
+                    {
+                        dropList.Add(drop.Item);
+                    }
+                }
+            }
+
+            if (lucky)
+            {
+                Stuntlucky = false;
+            }
+
+            GetStuntlucky();
+            Enqueue(GetStuntInfo());
+
+            if (dropList.Count == 0)
+            {
+                ReceiveChat("没有抽中任何物品", ChatType.System);
+                return;
+            }
+
+            ItemInfo selectedItemInfo =
+                dropList[Envir.Random.Next(dropList.Count)];
+
+            UserItem gainItem = Envir.CreateDropItem(selectedItemInfo);
+
+            if (gainItem != null)
+            {
+                gainItem.Count = 1;
+
+                GainItem(gainItem);
+
+                ReceiveChat($"抽奖成功！获得了 {gainItem.Count} 个 {RemoveTrailingDigits(gainItem.Info.Name)}", ChatType.System);
+            }
+
+            static string RemoveTrailingDigits(string name)
+            {
+                int i = name.Length - 1;
+
+                while (i >= 0 && char.IsDigit(name[i]))
+                {
+                    i--;
+                }
+
+                return i < 0 ? name : name[..(i + 1)];
+            }
+        }
+
+        public void RepairStuntItems()
+        {
+            if (Info.Equipment == null || (int)EquipmentSlot.护身符 >= Info.Equipment.Length) return;
+
+            UserItem box = Info.Equipment[(int)EquipmentSlot.护身符];
+
+            if (box == null || !box.Info.IsStuntBox || box.Slots == null || Stunt.StuntType != 5) return;
+
+            StuntSlot[] slots = { StuntSlot.StuntDestroy, StuntSlot.StuntGuard, StuntSlot.StuntMedicine, StuntSlot.StuntAll };
+
+            for (int i = 0; i < slots.Length; i++)
+            {
+                StuntSlot slot = slots[i];
+
+                if ((int)slot >= box.Slots.Length) continue;
+
+                UserItem item = box.Slots[(int)slot];
+
+                if (item == null) continue;
+
+                if (item.CurrentDura >= item.MaxDura) continue;
+
+                int needDura = item.MaxDura - item.CurrentDura;
+                long needPoints = needDura * 1L;
+
+                if (Info.StuntPoints < needPoints)
+                {
+                    ReceiveChat($"绝技点不足，{item.FriendlyName} 需要 {needPoints} 点绝技点。", ChatType.System); 
+                    return;
+                }
+
+                Info.StuntPoints -= needPoints;
+
+                item.CurrentDura = item.MaxDura;
+                item.DuraChanged = false;
+
+                Enqueue(new S.ItemRepaired
+                {
+                    UniqueID = item.UniqueID,
+                    MaxDura = item.MaxDura,
+                    CurrentDura = item.CurrentDura
+                });
+            }
+
+            Enqueue(GetStuntInfo());
+            ReceiveChat("绝技物品修复完成！", ChatType.System);
+        }
+
+        public void AddStuntPoints(long stuntPoints)
+        {
+            if (stuntPoints > 0)
+            {
+                if (Info.StuntPoints > long.MaxValue - stuntPoints)
+                    Info.StuntPoints = long.MaxValue;
+                else
+                    Info.StuntPoints += stuntPoints;
+            }
+        }
+
+        public void RemoveStuntPoints(long stuntPoints)
+        {
+            if (stuntPoints > 0)
+            {
+                if (stuntPoints >= Info.StuntPoints)
+                    Info.StuntPoints = 0;
+                else
+                    Info.StuntPoints -= stuntPoints;
+            }
+        }
+
+        public override void RefreshStuntInfo()
+        {
+            if (Info.Equipment[(int)EquipmentSlot.护身符] == null) return;
+            if (!Info.Equipment[(int)EquipmentSlot.护身符].Info.IsStuntBox) return;
+            if (Stunt.StuntType != 5) return;
+
+            Enqueue(GetStuntInfo());
+            Broadcast(GetStuntInfo());
+        }
+
+        Packet GetStuntInfo()
+        {
+            return new S.StuntUpdate
+            {
+                ObjectID = ObjectID,
+                StuntType = Stunt.StuntType,
+                StuntPoints = Info.StuntPoints,
+                Stuntlucky = Stuntlucky,
+                StuntAllUnlockTime = Info.StuntAllUnlockTime,
+                StuntAllUnlocked = Info.StuntAllUnlockTime > 0
+            };
+        }
+
+        #endregion
+
         public void SetCompass(Point location)
         {
             Enqueue(new S.SetCompass { Location = location });
@@ -14751,7 +15221,7 @@ namespace Server.MirObjects
 
             Enqueue(new S.UpdateHeroSpawnState { State = HeroSpawnState.Unsummoned });
 
-            Console.WriteLine("[Hero] Hero forcibly despawned and removed.");
+            Console.WriteLine("[Hero] 英雄被强制下线和移除");
         }
         public void ReviveHero()
         {

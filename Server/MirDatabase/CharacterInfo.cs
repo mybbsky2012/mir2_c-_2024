@@ -73,7 +73,7 @@ namespace Server.MirDatabase
         public byte MentalState;
         public byte MentalStateLvl;
 
-        public UserItem[] Inventory = new UserItem[46], Equipment = new UserItem[14], Trade = new UserItem[10], QuestInventory = new UserItem[40], Refine = new UserItem[16];
+        public UserItem[] Inventory = new UserItem[46], Equipment = new UserItem[16], Trade = new UserItem[10], QuestInventory = new UserItem[40], Refine = new UserItem[16];
         public List<ItemRentalInformation> RentedItems = new List<ItemRentalInformation>();
         public List<ItemRentalInformation> RentedItemsToRemove = new List<ItemRentalInformation>();
         public bool HasRentedItem;
@@ -97,6 +97,8 @@ namespace Server.MirDatabase
         public AccountInfo AccountInfo;
         public PlayerObject Player;
         public MountInfo Mount;
+        public StuntInfo Stunt;
+        public long StuntPoints, StuntAllUnlockTime;
 
         public Dictionary<int, int> GSpurchases = new Dictionary<int, int>();
         public int[] Rank = new int[2];//dont save this in db!(and dont send it to clients :p)
@@ -271,7 +273,7 @@ namespace Server.MirDatabase
 
                 if (quest == null || quest.Info == null || quest.IsOrphan)
                 {
-                    Console.WriteLine($"[Load] Skipped orphan QuestProgress (Index={quest?.Index}) for character: {Name}");
+                    MessageQueue.Instance.Enqueue($"[加载] 跳过无效的任务进度（Index={quest?.Index}），角色：{Name}"); 
                     continue;
                 }
                 if (Envir.BindQuest(quest))
@@ -309,6 +311,8 @@ namespace Server.MirDatabase
             }
 
             PearlCount = reader.ReadInt32();
+            StuntPoints = reader.ReadInt64();
+            StuntAllUnlockTime = reader.ReadInt64();
 
             count = reader.ReadInt32();
             for (int i = 0; i < count; i++)
@@ -496,7 +500,45 @@ namespace Server.MirDatabase
                 CurrentQuests[i].Save(writer);
             }
 
+            for (int i = Buffs.Count - 1; i >= 0; i--)
+            {
+                if (Buffs[i] == null)
+                {
+                    MessageQueue.Instance.Enqueue($"发现空Buff，已自动删除：角色={Name}，ObjectID={Index}");
+                    Buffs.RemoveAt(i);
+                    continue;
+                }
+
+                if (Buffs[i].Info == null)
+                {
+                    MessageQueue.Instance.Enqueue($"发现异常Buff，BuffInfo为空，已自动删除：角色={Name}，ObjectID={Index}");
+                    Buffs.RemoveAt(i);
+                    continue;
+                }
+
+                if (Buffs[i].Stats == null)
+                {
+                    MessageQueue.Instance.Enqueue($"发现异常Buff，属性数据为空，已自动删除：角色={Name}，类型={Buffs[i].Type}，ObjectID={Index}");
+                    Buffs.RemoveAt(i);
+                    continue;
+                }
+
+                if (Buffs[i].Data == null)
+                {
+                    MessageQueue.Instance.Enqueue($"发现异常Buff，附加数据为空，已自动删除：角色={Name}，类型={Buffs[i].Type}，ObjectID={Index}");
+                    Buffs.RemoveAt(i);
+                    continue;
+                }
+
+                if (Buffs[i].Values == null)
+                {
+                    MessageQueue.Instance.Enqueue($"发现异常Buff，数值数据为空，已自动删除：角色={Name}，类型={Buffs[i].Type}，ObjectID={Index}");
+                    Buffs.RemoveAt(i);
+                }
+            }
+
             writer.Write(Buffs.Count);
+
             for (int i = 0; i < Buffs.Count; i++)
             {
                 Buffs[i].Save(writer);
@@ -515,6 +557,8 @@ namespace Server.MirDatabase
             }
 
             writer.Write(PearlCount);
+            writer.Write(StuntPoints);
+            writer.Write(StuntAllUnlockTime);
 
             writer.Write(CompletedQuests.Count);
             for (int i = 0; i < CompletedQuests.Count; i++)
@@ -710,6 +754,27 @@ namespace Server.MirDatabase
 
 
         public MountInfo(HumanObject ob)
+        {
+            Player = ob;
+        }
+    }
+
+    public class StuntInfo
+    {
+        public HumanObject Player;
+        public short StuntType = -1;
+
+        public bool HasStuntBox
+        {
+            get { return Player.Info.Equipment[(int)EquipmentSlot.护身符] != null; }
+        }
+
+        public UserItem[] Slots
+        {
+            get { return Player.Info.Equipment[(int)EquipmentSlot.护身符].Slots; }
+        }
+
+        public StuntInfo(HumanObject ob)
         {
             Player = ob;
         }

@@ -2,7 +2,6 @@ using System.Drawing;
 ﻿using Server.MirDatabase;
 using Server.MirEnvir;
 using System.Globalization;
-using System.Numerics;
 using System.Text.RegularExpressions;
 using S = ServerPackets;
 using Timer = Server.MirEnvir.Timer;
@@ -532,6 +531,17 @@ namespace Server.MirObjects
                     acts.Add(new NPCActions(ActionType.TakePearls, parts[1]));
                     break;
 
+                    case "GIVESTUNTPOINTS":
+                        if (parts.Length < 2) return;
+
+                        acts.Add(new NPCActions(ActionType.GiveStuntPoints, parts[1]));
+                        break;
+
+                    case "TAKESTUNTPOINTS":
+                        if (parts.Length < 2) return;
+
+                        acts.Add(new NPCActions(ActionType.TakeStuntPoints, parts[1]));
+                        break;
                 case "GIVEITEM":
                     if (parts.Length < 2) return;
 
@@ -1287,7 +1297,12 @@ namespace Server.MirObjects
                     if (parts.Length < 2) return;
                     acts.Add(new NPCActions(ActionType.GiveGuildExp, parts[1]));
                     break;
-				case "CONTROLMECHANISM":
+                    case "UNLOCKSTUNTALL":
+                        if (parts.Length < 2) return;
+
+                        acts.Add(new NPCActions(ActionType.UnlockStuntAll, parts[1]));
+                        break;
+                    case "CONTROLMECHANISM":
                         {
                             if (parts.Length < 3) return;
 
@@ -3427,6 +3442,36 @@ namespace Server.MirObjects
                         }
                         break;
 
+                    case ActionType.GiveStuntPoints:
+                        {
+                            if (!long.TryParse(param[0], out long stuntPoints)) return;
+
+                            if (stuntPoints < 0) return;
+
+                            if (stuntPoints > long.MaxValue - player.Info.StuntPoints)
+                                stuntPoints = long.MaxValue - player.Info.StuntPoints;
+
+                            if (stuntPoints <= 0) return;
+
+                            player.AddStuntPoints(stuntPoints);
+                        }
+                        break;
+
+                    case ActionType.TakeStuntPoints:
+                        {
+                            if (!long.TryParse(param[0], out long stuntPoints)) return;
+
+                            if (stuntPoints < 0) return;
+
+                            if (stuntPoints > player.Info.StuntPoints)
+                                stuntPoints = player.Info.StuntPoints;
+
+                            if (stuntPoints <= 0) return;
+
+                            player.RemoveStuntPoints(stuntPoints);
+                        }
+                        break;
+
                     case ActionType.GivePearls:
                         {
                             if (!uint.TryParse(param[0], out uint pearls)) return;
@@ -4155,7 +4200,7 @@ namespace Server.MirObjects
 
                             if (player.MyGuildRank == null) return;
 
-                            if (player.MyGuild.Name == Settings.NewbieGuild) player.RemoveBuff(BuffType.新人特效);
+                            if (player.MyGuild.Name == Settings.NewbieGuild) player.RemoveBuff(BuffType.公会成员);
                             if (player.HasBuff(BuffType.公会特效)) player.RemoveBuff(BuffType.公会特效);
 
                             player.MyGuild.DeleteMember(player, player.Name);
@@ -4968,6 +5013,19 @@ namespace Server.MirObjects
                             if (!bool.TryParse(param[1], out bool ascending)) return;
 
                             player.SendControlMechanism(mapName, ascending);
+                        }
+                        break;
+                    case ActionType.UnlockStuntAll:
+                        {
+                            if (!long.TryParse(param[0], out long unlockTime))
+                                return;
+
+                            if (unlockTime <= 0)
+                                return;
+
+                            player.Info.StuntAllUnlockTime += unlockTime;
+
+                            player.RefreshStuntInfo();
                         }
                         break;
                 }

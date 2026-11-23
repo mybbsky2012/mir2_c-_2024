@@ -925,7 +925,9 @@ namespace ServerPackets
         public short MountType;
         public bool RidingMount;
         public bool Fishing;
-
+        public short StuntType;
+        public bool Stuntlucky;
+        public bool StuntAllUnlocked;
         public short TransformType;
 
         public uint ElementOrbEffect;
@@ -962,6 +964,9 @@ namespace ServerPackets
             MountType = reader.ReadInt16();
             RidingMount = reader.ReadBoolean();
             Fishing = reader.ReadBoolean();
+            StuntType = reader.ReadInt16();
+            Stuntlucky = reader.ReadBoolean();
+            StuntAllUnlocked = reader.ReadBoolean();
 
             TransformType = reader.ReadInt16();
 
@@ -1005,6 +1010,9 @@ namespace ServerPackets
             writer.Write(MountType);
             writer.Write(RidingMount);
             writer.Write(Fishing);
+            writer.Write(StuntType);
+            writer.Write(Stuntlucky);
+            writer.Write(StuntAllUnlocked);
 
             writer.Write(TransformType);
 
@@ -7085,6 +7093,38 @@ namespace ServerPackets
                 writer.Write(row.Bonus);
                 writer.Write(row.Honor);
             }
+        }
+    }
+
+    public sealed class StuntUpdate : Packet
+    {
+        public override short Index { get { return (short)ServerPacketIds.StuntUpdate; } }
+
+        public uint ObjectID;
+        public short StuntType;
+        public long StuntPoints;
+        public bool Stuntlucky;
+        public bool StuntAllUnlocked;
+        public long StuntAllUnlockTime;
+
+        protected override void ReadPacket(BinaryReader reader)
+        {
+            ObjectID = reader.ReadUInt32();
+            StuntType = reader.ReadInt16();
+            StuntPoints = reader.ReadInt64();
+            Stuntlucky = reader.ReadBoolean();
+            StuntAllUnlocked = reader.ReadBoolean();
+            StuntAllUnlockTime = reader.ReadInt64();
+        }
+
+        protected override void WritePacket(BinaryWriter writer)
+        {
+            writer.Write(ObjectID);
+            writer.Write(StuntType);
+            writer.Write(StuntPoints);
+            writer.Write(Stuntlucky);
+            writer.Write(StuntAllUnlocked);
+            writer.Write(StuntAllUnlockTime);
         }
     }
 }

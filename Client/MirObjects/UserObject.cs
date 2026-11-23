@@ -34,7 +34,7 @@ namespace Client.MirObjects
 
         public virtual BuffDialog GetBuffDialog => GameScene.Scene.BuffsDialog;
 
-        public UserItem[] Inventory = new UserItem[46], Equipment = new UserItem[14], Trade = new UserItem[10], QuestInventory = new UserItem[40];
+        public UserItem[] Inventory = new UserItem[46], Equipment = new UserItem[16], Trade = new UserItem[10], QuestInventory = new UserItem[40];
         public int BeltIdx = 6, HeroBeltIdx = 2;
         public bool HasExpandedStorage = false;
         public bool HasStoragePassword = false;
@@ -62,6 +62,9 @@ namespace Client.MirObjects
         public MirDirection NextMagicDirection;
         public QueuedAction QueuedAction;
 
+        public long StuntPoints;
+        public long StuntAllUnlockTime;
+        public bool Stuntlucky;
         public UserObject() { }
         public UserObject(uint objectID) : base(objectID)
         {
@@ -283,6 +286,7 @@ namespace Client.MirObjects
             Armour = 0;
             WingEffect = 0;
             MountType = -1;
+            StuntType = -1;
 
             CurrentWearWeight = 0;
             CurrentHandWeight = 0;
@@ -323,7 +327,12 @@ namespace Client.MirObjects
                     MountType = realItem.Shape;
                 }
 
-                if (temp.Info.IsFishingRod) continue;
+                if (realItem.Type == ItemType.护身符 && temp.Info.IsStuntBox)
+                {
+                    StuntType = realItem.Shape;
+                }
+
+                if (temp.Info.IsFishingRod || (temp.Info.IsStuntBox)) continue;
 
                 Stats.Add(realItem.Stats);
                 Stats.Add(temp.AddedStats);
@@ -396,6 +405,11 @@ namespace Client.MirObjects
                 return;
             }
 
+            if (equipItem.Info.Type == ItemType.护身符 && equipItem.Info.IsStuntBox)
+            {
+                return;
+            }
+
             if (equipItem.Info.Type == ItemType.坐骑 && !RidingMount)
             {
                 return;
@@ -428,9 +442,9 @@ namespace Client.MirObjects
 
         private void RefreshItemSetStats()
         {
-            bool hasSmashSetBonus = false;     // Flag for Smash set AttackSpeed bonus
-            bool hasPuritySetBonus = false;    // Flag for Purity set Holy bonus
-            bool hasHwanDevilSetBonus = false; // Flag for HwanDevil set Weight bonuses
+            //bool hasSmashSetBonus = false;     // Flag for Smash set AttackSpeed bonus
+            //bool hasPuritySetBonus = false;    // Flag for Purity set Holy bonus
+            //bool hasHwanDevilSetBonus = false; // Flag for HwanDevil set Weight bonuses
 
             foreach (var s in ItemSets)
             {
@@ -496,7 +510,17 @@ namespace Client.MirObjects
                     }
                 }
 
-                if (s.Set == ItemSet.昆仑套装) //需在ItemData.cs中设置套装件数
+                if (s.Set == ItemSet.昆仑宝物套装)
+                {
+                    if (s.Type.Contains(ItemType.戒指) && s.Type.Contains(ItemType.项链))
+                    {
+                        Stats[Stat.MaxDC] += 5;
+                        Stats[Stat.MaxMC] += 5;
+                        Stats[Stat.MaxSC] += 5;
+                    }
+                }
+
+                if (s.Set == ItemSet.昆仑圣物套装) //需在ItemData.cs中设置套装件数
                 {
                     if (s.Type.Contains(ItemType.戒指) && s.Type.Contains(ItemType.项链))
                     {
@@ -504,25 +528,15 @@ namespace Client.MirObjects
                         Stats[Stat.MaxMC] += 8;
                         Stats[Stat.MaxSC] += 8;
                     }
-                    if (s.Type.Contains(ItemType.盔甲) && s.Type.Contains(ItemType.戒指) && s.Type.Contains(ItemType.手镯) && s.Type.Contains(ItemType.项链))
+                }
+
+                if (s.Set == ItemSet.昆仑神物套装)
+                {
+                    if (s.Type.Contains(ItemType.戒指) && s.Type.Contains(ItemType.项链))
                     {
-                        Stats[Stat.防御强化] += 20;// 如何实现 20%几率降低20%的伤害持续15秒冷却时间120秒
-                    }
-                    if (s.Type.Contains(ItemType.武器) && s.Type.Contains(ItemType.头盔) && s.Type.Contains(ItemType.腰带) && s.Type.Contains(ItemType.靴子))
-                    {
-                        Stats[Stat.攻击强化] += 20;// 如何实现 伤害增加20%持续15秒有20%几率攻击冷却时间120秒
-                    }
-                    if (s.Type.Contains(ItemType.盔甲) &&
-                        s.Type.Contains(ItemType.武器) &&
-                        s.Type.Contains(ItemType.头盔) &&
-                        s.Type.Contains(ItemType.靴子) &&
-                        s.Type.Contains(ItemType.腰带) &&
-                        s.Type.Contains(ItemType.项链) &&
-                        s.Type.Contains(ItemType.手镯) &&
-                        s.Type.Contains(ItemType.戒指))
-                    {
-                        Stats[Stat.暴击率] += 7;
-                        Stats[Stat.暴击伤害] += 40; //这里如何实现 攻击时有7%的几率增加40%的暴击伤害
+                        Stats[Stat.MaxDC] += 11;
+                        Stats[Stat.MaxMC] += 11;
+                        Stats[Stat.MaxSC] += 11;
                     }
                 }
 

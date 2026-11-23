@@ -194,24 +194,24 @@ namespace Server.MirDatabase
         }
 
 
-        public void CreateMap()
+        public Map CreateMap()
         {
             for (int j = 0; j < Envir.NPCInfoList.Count; j++)
             {
                 if (Envir.NPCInfoList[j].MapIndex != Index) continue;
-
                 NPCs.Add(Envir.NPCInfoList[j]);
             }
 
             Map map = new Map(this);
-
-            if (!map.Load()) return;
+            if (!map.Load()) return null;
 
             Envir.MapList.Add(map);
 
             for (int i = 0; i < SafeZones.Count; i++)
                 if (SafeZones[i].StartPoint)
                     Envir.StartPoints.Add(SafeZones[i]);
+
+            return map;
         }
 
         public void CreateSafeZone()

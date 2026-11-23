@@ -1,5 +1,4 @@
-﻿using ClientPackets;
-using Server.Library.MirDatabase;
+﻿using Server.Library.MirDatabase;
 using Server.Library.Utils;
 using Server.MirDatabase;
 using Server.MirNetwork;
@@ -9,7 +8,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using System.Numerics;
 using System.Text.RegularExpressions;
 using S = ServerPackets;
 
@@ -167,6 +165,7 @@ namespace Server.MirEnvir
 
         public List<DropInfo> FishingDrops = new List<DropInfo>();
         public List<DropInfo> AwakeningDrops = new List<DropInfo>();
+        public List<DropInfo> LotteryStuntDrops = new List<DropInfo>();
 
         public List<DropInfo> StrongboxDrops = new List<DropInfo>();
         public List<DropInfo> BlackstoneDrops = new List<DropInfo>();
@@ -1868,11 +1867,7 @@ namespace Server.MirEnvir
 
             for (var i = 0; i < MapInfoList.Count; i++)
             {
-                // Call CreateMap(), which adds the map to Envir.MapList
-                MapInfoList[i].CreateMap();
-
-                // Fetch the created map from Envir.MapList
-                Map map = MapList.FirstOrDefault(m => m.Info == MapInfoList[i]);
+                Map map = MapInfoList[i].CreateMap();
 
                 if (map != null)
                 {
@@ -1937,7 +1932,6 @@ namespace Server.MirEnvir
 
         }
 
-        
         private void StartNetwork()
         {
             Connections.Clear();
@@ -3039,6 +3033,7 @@ namespace Server.MirEnvir
             if (stat.PoisonRecovChance > 0 && Random.Next(stat.PoisonRecovChance) == 0) item.AddedStats[Stat.中毒恢复] = (byte)(RandomomRange(stat.PoisonRecovMaxStat-1, stat.PoisonRecovStatChance)+1);
             if (stat.CriticalRateChance > 0 && Random.Next(stat.CriticalRateChance) == 0) item.AddedStats[Stat.暴击率] = (byte)(RandomomRange(stat.CriticalRateMaxStat-1, stat.CriticalRateStatChance)+1);
             if (stat.CriticalDamageChance > 0 && Random.Next(stat.CriticalDamageChance) == 0) item.AddedStats[Stat.暴击伤害] = (byte)(RandomomRange(stat.CriticalDamageMaxStat-1, stat.CriticalDamageStatChance)+1);
+            if (stat.ExtraDamageChance > 0 && Random.Next(stat.ExtraDamageChance) == 0) item.AddedStats[Stat.额外伤害] = (byte)(RandomomRange(stat.ExtraDamageMaxStat - 1, stat.ExtraDamageStatChance) + 1);
             if (stat.FreezeChance > 0 && Random.Next(stat.FreezeChance) == 0) item.AddedStats[Stat.冰冻伤害] = (byte)(RandomomRange(stat.FreezeMaxStat-1, stat.FreezeStatChance)+1);
             if (stat.PoisonAttackChance > 0 && Random.Next(stat.PoisonAttackChance) == 0) item.AddedStats[Stat.毒素伤害] = (byte)(RandomomRange(stat.PoisonAttackMaxStat-1, stat.PoisonAttackStatChance)+1);
             if (stat.AttackSpeedChance > 0 && Random.Next(stat.AttackSpeedChance) == 0) item.AddedStats[Stat.攻击速度] = (sbyte)(RandomomRange(stat.AttackSpeedMaxStat-1, stat.AttackSpeedStatChance)+1);
@@ -3964,6 +3959,9 @@ namespace Server.MirEnvir
 
             BlackstoneDrops.Clear();
             DropInfo.Load(BlackstoneDrops, "灵物石功能", Path.Combine(Settings.DropPath, Settings.BlackstoneDropFilename + ".txt"));
+
+            LotteryStuntDrops.Clear();
+            DropInfo.Load(LotteryStuntDrops, "抽取绝技功能", Path.Combine(Settings.DropPath, Settings.LotteryStuntDropsFilename + ".txt"));
 
             MessageQueue.Enqueue(GameLanguage.ServerTextMap.GetLocalization(ServerTextKeys.DropsLoaded));
         }

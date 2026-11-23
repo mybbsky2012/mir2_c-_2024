@@ -88,6 +88,9 @@ namespace Client.MirScenes
         public NPCAwakeDialog NPCAwakeDialog;
         public HelpDialog HelpDialog;
         public MountDialog MountDialog;
+        public StuntDialog StuntDialog;
+        public StuntObtainDialog StuntObtainDialog;
+        public StuntlotteryDialog StuntlotteryDialog;
         public FishingDialog FishingDialog;
         public FishingStatusDialog FishingStatusDialog;
         public RefineDialog RefineDialog;
@@ -323,6 +326,9 @@ namespace Client.MirScenes
             KeyboardLayoutDialog = new KeyboardLayoutDialog { Parent = this, Visible = false };
             NoticeDialog = new NoticeDialog { Parent = this, Visible = false };
 
+            StuntDialog = new StuntDialog { Parent = this, Visible = false };
+            StuntObtainDialog = new StuntObtainDialog { Parent = this, Visible = false };
+            StuntlotteryDialog = new StuntlotteryDialog { Parent = this, Visible = false };
             MountDialog = new MountDialog { Parent = this, Visible = false };
             FishingDialog = new FishingDialog { Parent = this, Visible = false };
             FishingStatusDialog = new FishingStatusDialog { Parent = this, Visible = false };
@@ -2217,6 +2223,9 @@ namespace Client.MirScenes
                 case (short)ServerPacketIds.ControlMechanism:
                     ControlMechanism((S.ControlMechanism)p);
                     break;
+				case (short)ServerPacketIds.StuntUpdate:
+                    StuntUpdate((S.StuntUpdate)p);
+                    break;
                 default:
                     base.ProcessPacket(p);
                     break;
@@ -2587,6 +2596,9 @@ namespace Client.MirScenes
                 case MirGridType.Fishing:
                     toCell = FishingDialog.Grid[p.To];
                     break;
+				case MirGridType.Stunt:
+                    toCell = StuntDialog.Grid[p.To];
+                    break;
                 default:
                     return;
             }
@@ -2783,8 +2795,21 @@ namespace Client.MirScenes
             fromCell.Locked = false;
 
             if (!p.Success) return;
-            toCell.Item = fromCell.Item;
+
+            UserItem removedItem = fromCell.Item;
+
+            toCell.Item = removedItem;
             fromCell.Item = null;
+
+            if (removedItem != null && removedItem.Info.IsStuntBox)
+            {
+                CharacterDialog.Grid[(int)EquipmentSlot.绝技盒1].Item = null;
+                CharacterDialog.Grid[(int)EquipmentSlot.绝技盒2].Item = null;
+
+                GameScene.Scene.StuntDialog.ClearStuntExtractItems();
+                StuntDialog.Hide();
+            }
+
             CharacterDuraPanel.GetCharacterDura();
             if (p.Grid == MirGridType.HeroInventory)
                 Hero.RefreshStats();
@@ -2801,6 +2826,9 @@ namespace Client.MirScenes
             {
                 case MirGridType.Socket:
                     fromCell = SocketDialog.GetCell(p.UniqueID);
+                    break;
+                case MirGridType.Stunt:
+                    fromCell = StuntDialog.GetCell(p.UniqueID);
                     break;
                 case MirGridType.Mount:
                     fromCell = MountDialog.GetCell(p.UniqueID);
@@ -3153,6 +3181,58 @@ namespace Client.MirScenes
             Redraw();
         }
 
+        private void StuntUpdate(S.StuntUpdate p)
+        {
+            if (MapControl.Objects.TryGetValue(p.ObjectID, out MapObject obj))
+            {
+                PlayerObject player = obj as PlayerObject;
+
+                if (player != null)
+                {
+                    player.StuntUpdate(p);
+                }
+            }
+
+            if (p.ObjectID != User.ObjectID) return;
+
+            if (GameScene.User.StuntType != 5)
+            {
+                GameScene.Scene.StuntDialog.ClearStuntExtractItems();
+                GameScene.Scene.StuntDialog.Hide();
+            }
+            else
+            {
+                User.StuntPoints = p.StuntPoints;
+
+                GameScene.Scene.StuntDialog.StuntPointsText.Text = GameScene.User.StuntPoints.ToString("###,###,##0");
+                GameScene.Scene.StuntObtainDialog.StuntPointsText.Text = $"{User.StuntPoints:###,###,##0} (-3,000)";
+
+                User.Stuntlucky = p.Stuntlucky;
+
+                StuntDialogService.UpdateStuntBoostStatus(GameScene.User.Stuntlucky);
+
+                if (p.StuntAllUnlocked)
+                {
+                    GameScene.Scene.StuntDialog.Grid[(int)StuntSlot.StuntAll].Visible = true;
+                    GameScene.Scene.StuntDialog.Grid[(int)StuntSlot.StuntAll].Enabled = true;
+
+                    if (GameScene.Scene.StuntDialog.StuntGridBarLockButton != null)
+                        GameScene.Scene.StuntDialog.StuntGridBarLockButton.Visible = false;
+                }
+                else
+                {
+                    GameScene.Scene.StuntDialog.Grid[(int)StuntSlot.StuntAll].Visible = false;
+                    GameScene.Scene.StuntDialog.Grid[(int)StuntSlot.StuntAll].Enabled = false;
+                    GameScene.Scene.StuntDialog.Grid[(int)StuntSlot.StuntAll].Item = null;
+
+                    if (GameScene.Scene.StuntDialog.StuntGridBarLockButton != null)
+                        GameScene.Scene.StuntDialog.StuntGridBarLockButton.Visible = true;
+                }
+            }
+
+            User.RefreshStats();
+            GameScene.Scene.Redraw();
+        }
         private void TransformUpdate(S.TransformUpdate p)
         {
             if (MapControl.Objects.TryGetValue(p.ObjectID, out MapObject ob))
@@ -7328,6 +7408,18 @@ namespace Client.MirScenes
                 case ItemType.封印:
                     baseText = GameLanguage.ClientTextMap.GetLocalization(ClientTextKeys.ItemTypeSealedHero);
                     break;
+                case ItemType.攻击型绝技:
+                    //baseText = GameLanguage.ItemTypeStuntDestroy.GetLocalization(ClientTextKeys.ItemTypeStunt);//还未完全添加语言
+                    break;
+                case ItemType.防御型绝技:
+                    //baseText = GameLanguage.ItemTypeStuntGuard.GetLocalization(ClientTextKeys.ItemTypeStunt);//还未完全添加语言
+                    break;
+                case ItemType.技能型绝技:
+                    //baseText = GameLanguage.ItemTypeStuntMedicine.GetLocalization(ClientTextKeys.ItemTypeStunt);//还未完全添加语言
+                    break;
+                case ItemType.绝技材料:
+                    //    baseText = GameLanguage.ItemTypeStuntExtend.GetLocalization(ClientTextKeys.ItemTypeStunt);//还未完全添加语言
+                    break;
             }
 
             if (HoverItem.WeddingRing != -1)
@@ -7820,6 +7912,31 @@ namespace Client.MirScenes
 
                 ItemLabel.Size = new Size(Math.Max(ItemLabel.Size.Width, CRITICALDAMAGELabel.DisplayRectangle.Right + 4),
                     Math.Max(ItemLabel.Size.Height, CRITICALDAMAGELabel.DisplayRectangle.Bottom));
+            }
+
+            #endregion
+
+            #region EXTRADAMAGE
+
+            minValue = realItem.Stats[Stat.额外伤害];
+            maxValue = 0;
+            addValue = (!hideAdded && (!HoverItem.Info.NeedIdentify || HoverItem.Identified)) ? addedStats[Stat.额外伤害] : 0;
+
+            if ((minValue > 0 || maxValue > 0 || addValue > 0) && (realItem.Type != ItemType.宝玉神珠))
+            {
+                count++;
+                MirLabel EXTRADAMAGELabel = new MirLabel
+                {
+                    AutoSize = true,
+                    ForeColour = addValue > 0 ? Color.Cyan : Color.White,
+                    Location = new Point(4, ItemLabel.DisplayRectangle.Bottom),
+                    OutLine = true,
+                    Parent = ItemLabel,
+                    Text = GameLanguage.ClientTextMap.GetLocalization((ClientTextKeys.ExtraDamagePlus), minValue + addValue) + (addValue > 0 ? $" (+{addValue})" : string.Empty)
+                };
+
+                ItemLabel.Size = new Size(Math.Max(ItemLabel.Size.Width, EXTRADAMAGELabel.DisplayRectangle.Right + 4),
+                    Math.Max(ItemLabel.Size.Height, EXTRADAMAGELabel.DisplayRectangle.Bottom));
             }
 
             #endregion
@@ -8921,7 +9038,7 @@ namespace Client.MirScenes
                 MirLabel SOCKETLabel = new MirLabel
                 {
                     AutoSize = true,
-                    ForeColour = (count > realItem.Slots && !realItem.IsFishingRod && realItem.Type != ItemType.坐骑) ? Color.Cyan : Color.White,
+                    ForeColour = (count > realItem.Slots && !realItem.IsFishingRod && realItem.Type != ItemType.坐骑 && !realItem.IsStuntBox) ? Color.Cyan : Color.White,
                     Location = new Point(4, ItemLabel.DisplayRectangle.Bottom),
                     OutLine = true,
                     Parent = ItemLabel,
@@ -9724,6 +9841,24 @@ namespace Client.MirScenes
                         Math.Max(ItemLabel.Size.Height, Gemtorch.DisplayRectangle.Bottom));
                 }
                 #endregion
+                #region Stunt text
+                count++;
+                if (HoverItem.Info.Unique.HasFlag(SpecialItemMode.NoDuraLoss))
+                {
+                    MirLabel Gemtorch = new MirLabel
+                    {
+                        AutoSize = true,
+                        ForeColour = Color.White,
+                        Location = new Point(4, ItemLabel.DisplayRectangle.Bottom),
+                        OutLine = true,
+                        Parent = ItemLabel,
+                        Text = "-绝技盒"
+                    };
+
+                    ItemLabel.Size = new Size(Math.Max(ItemLabel.Size.Width, Gemtorch.DisplayRectangle.Right + 4),
+                        Math.Max(ItemLabel.Size.Height, Gemtorch.DisplayRectangle.Bottom));
+                }
+                #endregion
             }
 
             #endregion
@@ -10188,10 +10323,10 @@ namespace Client.MirScenes
                 [ItemSet.道护套装] = new() { (Array.Empty<ItemType>(), new[] { "生命值 + 30", "魔法值 + 30" }) },
                 [ItemSet.天龙套装] = new()
                 {
-                 (new[] { ItemType.盔甲, ItemType.武器 },new[] { "攻击强化 + 3" }),
-                 (new[] { ItemType.头盔, ItemType.腰带, ItemType.靴子 },new[] { "防御强化 + 3" }),
-                 (new[] { ItemType.戒指, ItemType.手镯, ItemType.项链 }, new[] { "攻击 + 2~6", "魔法 + 2~6", "道术 + 2~6", "攻击速度 + 2", "腕力 + 30", "负重 + 30", "背包重量 + 60"}),
-                 (new[] { ItemType.盔甲, ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子, ItemType.戒指, ItemType.手镯, ItemType.项链 }, new[] { "幸运 + 2", "生命值 + 100", "防御 + 2~6", "魔法防御 + 1~4", "魔法值 + 100", "中毒恢复 + 2"})
+                 (new[] { ItemType.武器, ItemType.盔甲 }, new[] { "冷却60秒-攻击时30%概率触发额外伤害", "额外伤害提升30%持续15秒" }),
+                 (new[] { ItemType.头盔, ItemType.腰带, ItemType.靴子 }, new[] { "冷却60秒-防御时25%概率触发减伤", "伤害减免提升30%持续15秒" }),
+                 (new[] { ItemType.戒指, ItemType.手镯, ItemType.项链 }, new[] { "攻击、魔法、道术 + 2~6；攻击速度 + 2", "腕力、负重 + 30；背包重量 + 60" }),
+                 (new[] { ItemType.盔甲, ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子, ItemType.戒指, ItemType.手镯, ItemType.项链 }, new[] { "幸运 + 2；生命值 + 100；防御 + 2~6", "魔法防御 + 1~4；魔法值 + 100；中毒恢复 + 2" })
                 },
                 [ItemSet.白骨套装] = new() { (Array.Empty<ItemType>(), new[] { "防御 + 0~2", "魔法 + 0~1", "道术 + 0~1" }) },
                 [ItemSet.虫血套装] = new() { (Array.Empty<ItemType>(), new[] { "攻击 + 0~1", "魔法 + 0~1", "道术 + 0~1", "魔法躲避 + 1", "毒物躲避 + 1" }) },
@@ -10223,12 +10358,26 @@ namespace Client.MirScenes
                 {
                  (new[] { ItemType.戒指, ItemType.戒指 },new[] { "攻击 + 0~5", "魔法 + 0~5", "道术 + 0~5" })
                 },
-                [ItemSet.昆仑套装] = new()
+                [ItemSet.昆仑宝物套装] = new()
+                {
+                 (new[] { ItemType.项链, ItemType.戒指 },new[] { "攻击 + 0~5", "魔法 + 0~5", "道术 + 0~5" }),
+                 (new[] { ItemType.项链, ItemType.戒指, ItemType.手镯, ItemType.盔甲 },new[] { "防御时有概率触发", "15%伤害减免持续10秒", "冷却时间120秒" }),
+                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子 },new[] { "攻击时有概率触发", "15%额外伤害持续10秒", "冷却时间120秒" }),
+                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子, ItemType.戒指, ItemType.项链, ItemType.手镯, ItemType.盔甲 },new[] { "暴击率 + 3%", "暴击伤害 + 30%" })
+                },
+                [ItemSet.昆仑圣物套装] = new()
                 {
                  (new[] { ItemType.项链, ItemType.戒指 },new[] { "攻击 + 0~8", "魔法 + 0~8", "道术 + 0~8" }),
-                 (new[] { ItemType.项链, ItemType.戒指, ItemType.手镯, ItemType.盔甲 },new[] { "防御强化 + 20%" }),//20%几率降低20%的伤害持续15秒冷却时间120秒
-                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子 },new[] { "攻击强化 + 20%" }),//伤害增加20%持续15秒有20%几率攻击冷却时间120秒
-                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子, ItemType.戒指, ItemType.项链, ItemType.手镯, ItemType.盔甲 },new[] { "暴击率 + 7%", "暴击伤害 + 40%" })//攻击时有7%的几率增加40%的暴击伤害
+                 (new[] { ItemType.项链, ItemType.戒指, ItemType.手镯, ItemType.盔甲 },new[] { "防御时有概率触发", "20%伤害减免持续15秒", "冷却时间120秒" }),
+                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子 },new[] { "攻击时有概率触发", "20%额外伤害持续15秒", "冷却时间120秒" }),
+                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子, ItemType.戒指, ItemType.项链, ItemType.手镯, ItemType.盔甲 },new[] { "暴击率 + 7%", "暴击伤害 + 40%" })
+                },
+                [ItemSet.昆仑神物套装] = new()
+                {
+                 (new[] { ItemType.项链, ItemType.戒指 },new[] { "攻击 + 0~11", "魔法 + 0~11", "道术 + 0~11" }),
+                 (new[] { ItemType.项链, ItemType.戒指, ItemType.手镯, ItemType.盔甲 },new[] { "防御时有概率触发", "25%伤害减免持续20秒", "冷却时间120秒" }),
+                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子 },new[] { "攻击时有概率触发", "25%额外伤害持续20秒", "冷却时间120秒" }),
+                 (new[] { ItemType.武器, ItemType.头盔, ItemType.腰带, ItemType.靴子, ItemType.戒指, ItemType.项链, ItemType.手镯, ItemType.盔甲 },new[] { "暴击率 + 11%", "暴击伤害 + 50%"})
                 },
             };
 
